@@ -25,6 +25,46 @@ function getNextGroupNumber() {
   return maxGroupNumber;
 }
 
+// Helper function to check and ungroup single-tab groups
+async function checkAndUngroupSingleTabGroups(groupId) {
+  try {
+    // Query tabs in this group
+    const tabs = await chrome.tabs.query({ groupId });
+
+    // If only one tab remains in the group, ungroup it
+    if (tabs.length === 1) {
+      console.log(
+        `Ungrouping tab ${tabs[0].id} from group ${groupId} (last tab)`,
+      );
+
+      try {
+        await chrome.tabs.ungroup(tabs[0].id);
+        tabToGroup.delete(tabs[0].id);
+
+        // Release the group number for reuse
+        const groupNumber = tabGroups.get(groupId);
+        if (groupNumber) {
+          usedGroupNumbers.delete(groupNumber);
+        }
+
+        tabGroups.delete(groupId);
+      } catch (ungroupError) {
+        console.error("Error ungrouping tab:", ungroupError);
+      }
+    }
+  } catch (error) {
+    console.error("Error checking group tabs:", error);
+
+    // Cleanup on error - release the group number
+    const groupNumber = tabGroups.get(groupId);
+    if (groupNumber) {
+      usedGroupNumbers.delete(groupNumber);
+    }
+
+    tabGroups.delete(groupId);
+  }
+}
+
 // Listen for tab creation events
 chrome.tabs.onCreated.addListener(async (tab) => {
   // Skip if it's a new empty tab (chrome://newtab/)
@@ -34,54 +74,58 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
   // Wait a bit to get the opener tab (ensures openerTabId is populated)
   setTimeout(async () => {
-    const currentTab = await chrome.tabs.get(tab.id);
+    try {
+      const currentTab = await chrome.tabs.get(tab.id);
 
-    // Skip if tab doesn't exist anymore
-    if (!currentTab) return;
+      // Skip if tab doesn't exist anymore
+      if (!currentTab) return;
 
-    // If this tab was opened from another tab
-    if (currentTab.openerTabId) {
-      const openerTab = await chrome.tabs.get(currentTab.openerTabId);
+      // If this tab was opened from another tab
+      if (currentTab.openerTabId) {
+        const openerTab = await chrome.tabs.get(currentTab.openerTabId);
 
-      // Skip if opener tab doesn't exist anymore
-      if (!openerTab) return;
+        // Skip if opener tab doesn't exist anymore
+        if (!openerTab) return;
 
-      // Skip if opener tab is pinned
-      if (openerTab.pinned) return;
+        // Skip if opener tab is pinned
+        if (openerTab.pinned) return;
 
-      // Store the relationship
-      tabRelationships.set(tab.id, currentTab.openerTabId);
+        // Store the relationship
+        tabRelationships.set(tab.id, currentTab.openerTabId);
 
-      // Check if opener tab is in a group
-      if (
-        openerTab.groupId &&
-        openerTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE
-      ) {
-        // Add this tab to the same group
-        await chrome.tabs.group({
-          tabIds: [tab.id],
-          groupId: openerTab.groupId,
-        });
-        tabToGroup.set(tab.id, openerTab.groupId);
-      } else {
-        // Create a new group with opener and new tab
-        const groupId = await chrome.tabs.group({
-          tabIds: [currentTab.openerTabId, tab.id],
-        });
+        // Check if opener tab is in a group
+        if (
+          openerTab.groupId &&
+          openerTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE
+        ) {
+          // Add this tab to the same group
+          await chrome.tabs.group({
+            tabIds: [tab.id],
+            groupId: openerTab.groupId,
+          });
+          tabToGroup.set(tab.id, openerTab.groupId);
+        } else {
+          // Create a new group with opener and new tab
+          const groupId = await chrome.tabs.group({
+            tabIds: [currentTab.openerTabId, tab.id],
+          });
 
-        // Get the next available group number
-        const groupNumber = getNextGroupNumber();
+          // Get the next available group number
+          const groupNumber = getNextGroupNumber();
 
-        // Update the group title to the number
-        await chrome.tabGroups.update(groupId, {
-          title: groupNumber.toString(),
-        });
+          // Update the group title to the number
+          await chrome.tabGroups.update(groupId, {
+            title: groupNumber.toString(),
+          });
 
-        // Store the group and update counter
-        tabGroups.set(groupId, groupNumber);
-        tabToGroup.set(currentTab.openerTabId, groupId);
-        tabToGroup.set(tab.id, groupId);
+          // Store the group and update counter
+          tabGroups.set(groupId, groupNumber);
+          tabToGroup.set(currentTab.openerTabId, groupId);
+          tabToGroup.set(tab.id, groupId);
+        }
       }
+    } catch (error) {
+      console.error("Error handling new tab:", error);
     }
   }, 300);
 });
@@ -96,32 +140,10 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   if (groupId) {
     tabToGroup.delete(tabId);
 
-    // Check if this was the last tab in the group
-    try {
-      const tabs = await chrome.tabs.query({ groupId });
-
-      // If only one tab remains in the group, ungroup it
-      if (tabs.length === 1) {
-        await chrome.tabs.ungroup(tabs[0].id);
-        tabToGroup.delete(tabs[0].id);
-
-        // Release the group number for reuse
-        const groupNumber = tabGroups.get(groupId);
-        if (groupNumber) {
-          usedGroupNumbers.delete(groupNumber);
-        }
-
-        tabGroups.delete(groupId);
-      }
-    } catch (error) {
-      // Group might not exist anymore, just clean up
-      const groupNumber = tabGroups.get(groupId);
-      if (groupNumber) {
-        usedGroupNumbers.delete(groupNumber);
-      }
-
-      tabGroups.delete(groupId);
-    }
+    // Add a small delay to allow Chrome to update its internal state
+    setTimeout(() => {
+      checkAndUngroupSingleTabGroups(groupId);
+    }, 50);
   }
 });
 
@@ -148,21 +170,11 @@ chrome.tabGroups.onRemoved.addListener((group) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // If this is a newtab that's being navigated away
   if (changeInfo.url && tab.url !== "chrome://newtab/") {
-    // If this tab is in a group but is the only one, ungroup it
+    // If this tab is in a group, check if it's the only one
     if (tab.groupId && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
-      const tabs = await chrome.tabs.query({ groupId: tab.groupId });
-      if (tabs.length === 1) {
-        await chrome.tabs.ungroup(tabId);
-
-        // Release the group number for reuse
-        const groupNumber = tabGroups.get(tab.groupId);
-        if (groupNumber) {
-          usedGroupNumbers.delete(groupNumber);
-        }
-
-        tabToGroup.delete(tabId);
-        tabGroups.delete(tab.groupId);
-      }
+      setTimeout(() => {
+        checkAndUngroupSingleTabGroups(tab.groupId);
+      }, 50);
     }
   }
 });
@@ -173,14 +185,59 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.url === "chrome://newtab/" || tab.pendingUrl === "chrome://newtab/") {
     // Wait a bit to ensure the tab has been properly created and possibly grouped
     setTimeout(async () => {
-      const currentTab = await chrome.tabs.get(tab.id);
-      if (
-        currentTab &&
-        currentTab.groupId &&
-        currentTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE
-      ) {
-        await chrome.tabs.ungroup(tab.id);
+      try {
+        const currentTab = await chrome.tabs.get(tab.id);
+        if (
+          currentTab &&
+          currentTab.groupId &&
+          currentTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE
+        ) {
+          await chrome.tabs.ungroup(tab.id);
+        }
+      } catch (error) {
+        console.error("Error handling empty tab:", error);
       }
     }, 100);
+  }
+});
+
+// Add a periodic check for orphaned single-tab groups
+setInterval(async () => {
+  // Get all tab groups
+  try {
+    const groups = await chrome.tabGroups.query({});
+    for (const group of groups) {
+      checkAndUngroupSingleTabGroups(group.id);
+    }
+  } catch (error) {
+    console.error("Error in periodic group check:", error);
+  }
+}, 5000); // Check every 5 seconds
+
+// Initialize the extension by checking all existing tabs
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log("Tab Tree Organizer installed");
+
+  // Get all existing tab groups and track them
+  try {
+    const groups = await chrome.tabGroups.query({});
+    for (const group of groups) {
+      if (group.title && !isNaN(parseInt(group.title))) {
+        const groupNumber = parseInt(group.title);
+        tabGroups.set(group.id, groupNumber);
+        usedGroupNumbers.add(groupNumber);
+        maxGroupNumber = Math.max(maxGroupNumber, groupNumber);
+      }
+    }
+
+    // Get all tabs and map them to their groups
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (tab.groupId && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        tabToGroup.set(tab.id, tab.groupId);
+      }
+    }
+  } catch (error) {
+    console.error("Error initializing extension:", error);
   }
 });
