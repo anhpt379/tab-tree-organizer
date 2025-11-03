@@ -8,8 +8,7 @@ representation of this hierarchy.
 ## Features
 
 - **Automatic Tab Grouping**: When you open a new tab from an existing tab, they are automatically grouped together
-- **Numerical Group Names**: Tab groups are named with sequential numbers (1, 2, 3, etc.)
-- **Number Reuse**: When a tab group is closed, its number becomes available for reuse
+- **Clean Group Names**: Tab groups use empty names for a cleaner interface
 - **Intelligent Ungrouping**: When a tab group contains only one tab, it's automatically ungrouped
 - **New Tab Behavior**: Empty new tabs (opened with Cmd+T/Ctrl+T) are not grouped
 - **Pinned Tab Protection**: Opening tabs from pinned tabs doesn't create groups
@@ -45,9 +44,8 @@ The extension tracks the parent-child relationship between tabs:
 1. When you open a link in a new tab, the extension identifies the source tab as the "parent"
 2. If the parent tab isn't already in a group, a new group is created with both tabs
 3. If the parent tab is already in a group, the new tab joins that group
-4. Groups are automatically named with sequential numbers
+4. Groups are created with empty names for a cleaner interface
 5. When tabs are closed, the extension checks if groups should be maintained or dissolved
-6. Numbers from closed groups are reused for new groups
 
 ## Edge Cases Handled
 
@@ -55,7 +53,6 @@ The extension tracks the parent-child relationship between tabs:
 - **New Empty Tabs**: When you open a new empty tab (Cmd+T/Ctrl+T), it's not grouped
 - **New Tab in Group**: If you open a new empty tab while in a tab group, it's automatically removed from the group
 - **Single Tab Groups**: Groups with only one tab are automatically ungrouped
-- **Group Deletion**: When groups are manually removed, their numbers become available for reuse
 
 ## Contributing
 

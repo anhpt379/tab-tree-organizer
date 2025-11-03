@@ -1,29 +1,7 @@
 // Store tab relationships (parent-child)
 const tabRelationships = new Map();
-// Store tab group IDs and their associated numbers
-const tabGroups = new Map();
 // Store which tabs are currently in groups
 const tabToGroup = new Map();
-// Track used group numbers
-const usedGroupNumbers = new Set();
-// Maximum group number used so far
-let maxGroupNumber = 0;
-
-// Function to get the next available group number
-function getNextGroupNumber() {
-  // First try to find the smallest unused number
-  for (let i = 1; i <= maxGroupNumber + 1; i++) {
-    if (!usedGroupNumbers.has(i)) {
-      usedGroupNumbers.add(i);
-      maxGroupNumber = Math.max(maxGroupNumber, i);
-      return i;
-    }
-  }
-  // Fallback (shouldn't reach here)
-  maxGroupNumber++;
-  usedGroupNumbers.add(maxGroupNumber);
-  return maxGroupNumber;
-}
 
 // Helper function to check and ungroup single-tab groups
 async function checkAndUngroupSingleTabGroups(groupId) {
@@ -40,28 +18,12 @@ async function checkAndUngroupSingleTabGroups(groupId) {
       try {
         await chrome.tabs.ungroup(tabs[0].id);
         tabToGroup.delete(tabs[0].id);
-
-        // Release the group number for reuse
-        const groupNumber = tabGroups.get(groupId);
-        if (groupNumber) {
-          usedGroupNumbers.delete(groupNumber);
-        }
-
-        tabGroups.delete(groupId);
       } catch (ungroupError) {
         console.error("Error ungrouping tab:", ungroupError);
       }
     }
   } catch (error) {
     console.error("Error checking group tabs:", error);
-
-    // Cleanup on error - release the group number
-    const groupNumber = tabGroups.get(groupId);
-    if (groupNumber) {
-      usedGroupNumbers.delete(groupNumber);
-    }
-
-    tabGroups.delete(groupId);
   }
 }
 
@@ -110,16 +72,6 @@ chrome.tabs.onCreated.addListener(async (tab) => {
             tabIds: [currentTab.openerTabId, tab.id],
           });
 
-          // Get the next available group number
-          const groupNumber = getNextGroupNumber();
-
-          // Update the group title to the number
-          await chrome.tabGroups.update(groupId, {
-            title: groupNumber.toString(),
-          });
-
-          // Store the group and update counter
-          tabGroups.set(groupId, groupNumber);
           tabToGroup.set(currentTab.openerTabId, groupId);
           tabToGroup.set(tab.id, groupId);
         }
@@ -149,15 +101,6 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
 // Listen for tab group removal
 chrome.tabGroups.onRemoved.addListener((group) => {
-  // When a group is removed, release its number for reuse
-  const groupNumber = tabGroups.get(group.id);
-  if (groupNumber) {
-    usedGroupNumbers.delete(groupNumber);
-  }
-
-  // Remove it from our tracking
-  tabGroups.delete(group.id);
-
   // Clean up any tabs that were in this group
   for (const [tabId, groupId] of tabToGroup.entries()) {
     if (groupId === group.id) {
@@ -218,18 +161,7 @@ setInterval(async () => {
 chrome.runtime.onInstalled.addListener(async () => {
   console.log("Tab Tree Organizer installed");
 
-  // Get all existing tab groups and track them
   try {
-    const groups = await chrome.tabGroups.query({});
-    for (const group of groups) {
-      if (group.title && !isNaN(parseInt(group.title))) {
-        const groupNumber = parseInt(group.title);
-        tabGroups.set(group.id, groupNumber);
-        usedGroupNumbers.add(groupNumber);
-        maxGroupNumber = Math.max(maxGroupNumber, groupNumber);
-      }
-    }
-
     // Get all tabs and map them to their groups
     const tabs = await chrome.tabs.query({});
     for (const tab of tabs) {
