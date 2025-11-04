@@ -8,7 +8,8 @@ representation of this hierarchy.
 ## Features
 
 - **Automatic Tab Grouping**: When you open a new tab from an existing tab, they are automatically grouped together
-- **Clean Group Names**: Tab groups use empty names for a cleaner interface
+- **Visual Group Indicators**: Tab groups show "⌃" when expanded and "…" when collapsed
+- **Dynamic Group Titles**: Group titles automatically update based on their collapsed/expanded state
 - **Intelligent Ungrouping**: When a tab group contains only one tab, it's automatically ungrouped
 - **New Tab Behavior**: Empty new tabs (opened with Cmd+T/Ctrl+T) are not grouped
 - **Pinned Tab Protection**: Opening tabs from pinned tabs doesn't create groups
@@ -45,6 +46,7 @@ The extension tracks the parent-child relationship between tabs:
 2. If the parent tab isn't already in a group, a new group is created with both tabs
 3. If the parent tab is already in a group, the new tab joins that group
 4. Groups are created with empty names for a cleaner interface
+4. Groups display "⌃" when expanded and "…" when collapsed for visual clarity
 5. When tabs are closed, the extension checks if groups should be maintained or dissolved
 
 ## Edge Cases Handled

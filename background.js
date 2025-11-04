@@ -3,6 +3,17 @@ const tabRelationships = new Map();
 // Store which tabs are currently in groups
 const tabToGroup = new Map();
 
+// Helper function to update group title based on collapsed state
+async function updateGroupTitle(groupId) {
+  try {
+    const group = await chrome.tabGroups.get(groupId);
+    const title = group.collapsed ? "↑" : "↓";
+    await chrome.tabGroups.update(groupId, { title });
+  } catch (error) {
+    console.error("Error updating group title:", error);
+  }
+}
+
 // Helper function to check and ungroup single-tab groups
 async function checkAndUngroupSingleTabGroups(groupId) {
   try {
@@ -72,6 +83,9 @@ chrome.tabs.onCreated.addListener(async (tab) => {
             tabIds: [currentTab.openerTabId, tab.id],
           });
 
+          // Set initial title based on state (new groups are expanded by default)
+          await updateGroupTitle(groupId);
+
           tabToGroup.set(currentTab.openerTabId, groupId);
           tabToGroup.set(tab.id, groupId);
         }
@@ -107,6 +121,12 @@ chrome.tabGroups.onRemoved.addListener((group) => {
       tabToGroup.delete(tabId);
     }
   }
+});
+
+// Listen for tab group updates (collapsed/expanded state changes)
+chrome.tabGroups.onUpdated.addListener(async (group) => {
+  // Update title when collapsed state changes
+  await updateGroupTitle(group.id);
 });
 
 // Handle tab updates (for when a new tab page gets navigated)
@@ -162,6 +182,12 @@ chrome.runtime.onInstalled.addListener(async () => {
   console.log("Tab Tree Organizer installed");
 
   try {
+    // Update all existing tab groups with appropriate titles
+    const groups = await chrome.tabGroups.query({});
+    for (const group of groups) {
+      await updateGroupTitle(group.id);
+    }
+
     // Get all tabs and map them to their groups
     const tabs = await chrome.tabs.query({});
     for (const tab of tabs) {
