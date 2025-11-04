@@ -3,12 +3,34 @@ const tabRelationships = new Map();
 // Store which tabs are currently in groups
 const tabToGroup = new Map();
 
+// Store group collapsed states to avoid redundant updates
+const groupStates = new Map();
+
 // Helper function to update group title based on collapsed state
-async function updateGroupTitle(groupId) {
+async function updateGroupTitle(groupId, forceUpdate = false) {
   try {
-    const group = await chrome.tabGroups.get(groupId);
-    const title = group.collapsed ? "↑" : "↓";
-    await chrome.tabGroups.update(groupId, { title });
+    let group;
+    try {
+      group = await chrome.tabGroups.get(groupId);
+    } catch (error) {
+      // Group doesn't exist anymore
+      groupStates.delete(groupId);
+      return;
+    }
+
+    const newTitle = group.collapsed ? "…" : "⌃";
+
+    // Only update if state changed or forced
+    const lastState = groupStates.get(groupId);
+    const stateChanged =
+      lastState === undefined || lastState !== group.collapsed;
+    if (forceUpdate || stateChanged) {
+      groupStates.set(groupId, group.collapsed);
+      // Only update if title is different
+      if (group.title !== newTitle) {
+        await chrome.tabGroups.update(groupId, { title: newTitle });
+      }
+    }
   } catch (error) {
     console.error("Error updating group title:", error);
   }
@@ -84,7 +106,7 @@ chrome.tabs.onCreated.addListener(async (tab) => {
           });
 
           // Set initial title based on state (new groups are expanded by default)
-          await updateGroupTitle(groupId);
+          await updateGroupTitle(groupId, true);
 
           tabToGroup.set(currentTab.openerTabId, groupId);
           tabToGroup.set(tab.id, groupId);
@@ -105,6 +127,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   const groupId = tabToGroup.get(tabId);
   if (groupId) {
     tabToGroup.delete(tabId);
+    groupStates.delete(groupId);
 
     // Add a small delay to allow Chrome to update its internal state
     setTimeout(() => {
@@ -119,13 +142,15 @@ chrome.tabGroups.onRemoved.addListener((group) => {
   for (const [tabId, groupId] of tabToGroup.entries()) {
     if (groupId === group.id) {
       tabToGroup.delete(tabId);
+      groupStates.delete(group.id);
     }
   }
 });
 
 // Listen for tab group updates (collapsed/expanded state changes)
 chrome.tabGroups.onUpdated.addListener(async (group) => {
-  // Update title when collapsed state changes
+  // Update title - the updateGroupTitle function will check if update is needed
+  // by comparing with stored state
   await updateGroupTitle(group.id);
 });
 
@@ -175,7 +200,7 @@ setInterval(async () => {
   } catch (error) {
     console.error("Error in periodic group check:", error);
   }
-}, 5000); // Check every 5 seconds
+}, 15000); // Check every 15 seconds
 
 // Initialize the extension by checking all existing tabs
 chrome.runtime.onInstalled.addListener(async () => {
@@ -185,7 +210,7 @@ chrome.runtime.onInstalled.addListener(async () => {
     // Update all existing tab groups with appropriate titles
     const groups = await chrome.tabGroups.query({});
     for (const group of groups) {
-      await updateGroupTitle(group.id);
+      await updateGroupTitle(group.id, true);
     }
 
     // Get all tabs and map them to their groups
